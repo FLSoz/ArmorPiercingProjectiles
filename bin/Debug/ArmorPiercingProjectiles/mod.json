@@ -1,0 +1,9 @@
+{
+  "Id": "Armor piercing projectiles",
+  "DisplayName": "Armor Piercing Projectiles",
+  "Author": "FLSoz",
+  "Version": "0.0.1",
+  "Enable": true,
+  "AssemblyName": "ArmorPiercingProjectiles.dll",
+  "EntryMethod": "ArmorPiercingProjectiles.src.IngressPoint.Main"
+}
