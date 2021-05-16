@@ -14,12 +14,17 @@ namespace ArmorPiercingProjectiles.src
     {
 
         public static bool Debug = false;
+        public static List<String> debugLog = new List<string>();
 
         private static void DebugPrint(String contents)
         {
             if (IngressPoint.Debug)
             {
                 Console.WriteLine("[AP-P] " + contents);
+            }
+            else
+            {
+                debugLog.Add("[AP-P] " + contents);
             }
         }
 
@@ -60,190 +65,179 @@ namespace ArmorPiercingProjectiles.src
             private static int HandleCollision(Projectile __instance, ArmorPiercing armorPiercing, Damageable damageable, Vector3 hitPoint, Vector3 impactVector, Collider otherCollider, bool ForceDestroy)
             {
                 int retVal = 0;
-                try
+                if (!((Component)__instance).gameObject.activeInHierarchy)
                 {
-                    if (!((Component)__instance).gameObject.activeInHierarchy)
-                    {
-                        return 0;
-                    }
-                    if ((bool)PatchProjectile.m_Stuck.GetValue(__instance))
-                    {
-                        return 0;
-                    }
-                    bool singleImpact = (bool)PatchProjectile.m_SingleImpact.GetValue(__instance);
-                    bool hasHitTerrain = false;
-
-                    bool stickOnContact = (bool)PatchProjectile.m_StickOnContact.GetValue(__instance);
-                    float deathDelay = (float)PatchProjectile.GetDeathDelay.Invoke(__instance, null);
-
-                    DebugPrint($"Handle Collision for projectile {__instance.name}");
-
-                    // handle damage calculations and explosions
-                    if (damageable)
-                    {
-                        float damage = armorPiercing.remainingDamage;
-                        TankBlock targetBlock = damageable.Block;
-
-                        d.Assert(targetBlock != null, "TARGET BLOCK IS NOT NULL");
-
-                        // Armor pierce works as follows:
-                        // Deal full damage to the first block we hit. After that, (1 - pierce) * dealt damage is subtracted from remaining damage (if any)
-
-                        ManDamage.DamageInfo damageInfo = new ManDamage.DamageInfo(damage, (ManDamage.DamageType)PatchProjectile.m_DamageType.GetValue(__instance), (ModuleWeapon)PatchProjectile.m_Weapon.GetValue(__instance), __instance.Shooter, hitPoint, __instance.rbody.velocity, 0f, 0f);
-                        float fracDamageRemaining = Singleton.Manager<ManDamage>.inst.DealDamage(damageInfo, damageable);
-
-                        float damageDealt = fracDamageRemaining > 0.0f ? damage * (1 - fracDamageRemaining) : damage;
-                        DebugPrint($"Stage 4a - Just dealt {damageDealt} damage to block {targetBlock.name} ({damageable.Health}), original shell has damage {damage}");
-
-                        // block was destroyed, damage potentially leftover
-                        if (fracDamageRemaining > 0.0f)
-                        {
-                            retVal = (int)Mathf.Max(0.0f, (damage * fracDamageRemaining) - (damageDealt * (1.0f - armorPiercing.armorPierce)));
-                            DebugPrint($"Killed block {targetBlock.name}, SHELL DMG {damage} ==[REMAINING DMG]=> {retVal}");
-                        }
-                        else
-                        {
-                            DebugPrint($"Failed to kill block {targetBlock.name}, SHELL DMG {damage} ==[REMAINING DMG]=> 0");
-                        }
-                        // no damage leftover cases:
-                        if (retVal == 0)
-                        {
-                            if (deathDelay != 0.0f && !stickOnContact)
-                            {
-                                // penetration fuse, but failed to kill = flattened, spawn the explosion now
-                                deathDelay = 0.0f;
-                                PatchProjectile.SpawnExplosion.Invoke(__instance, new object[] { hitPoint, damageable });
-                            }
-                            else if ((bool)PatchProjectile.IsProjectileArmed.Invoke(__instance, null) && !stickOnContact)
-                            {
-                                // no penetration fuse, check if armed and not stick on contact - stick on contact explosions are done later
-                                PatchProjectile.SpawnExplosion.Invoke(__instance, new object[] { hitPoint, damageable });
-                            }
-                        }
-                    }
-                    else if (otherCollider is TerrainCollider || otherCollider.gameObject.layer == Globals.inst.layerLandmark || otherCollider.GetComponentInParents<TerrainObject>(true))
-                    {
-                        DebugPrint("Stage 4b");
-                        hasHitTerrain = true;
-                        PatchProjectile.SpawnTerrainHitEffect.Invoke(__instance, new object[] { hitPoint });
-                        DebugPrint("Stage 4bb");
-
-                        // if explode on terrain, explode and end, no matter death delay
-                        if ((bool)PatchProjectile.m_ExplodeOnTerrain.GetValue(__instance) && (bool)PatchProjectile.IsProjectileArmed.Invoke(__instance, null))
-                        {
-                            PatchProjectile.SpawnExplosion.Invoke(__instance, new object[] { hitPoint, null });
-
-                            // if default single impact behavior, explode on terrain, then die.
-                            // else, keep the bouncing explosions
-                            if (singleImpact)
-                            {
-                                __instance.Recycle(false);
-                                return 0;
-                            }
-                        }
-                    }
-
-                    DebugPrint("Stage 5 - play sfx, handle recycle");
-                    Singleton.Manager<ManSFX>.inst.PlayImpactSFX(__instance.Shooter, (ManSFX.WeaponImpactSfxType)PatchProjectile.m_ImpactSFXType.GetValue(__instance), damageable, hitPoint, otherCollider);
-
-                    DebugPrint("Stage 6");
-                    // if here, then no stick on contact, and no damage is leftover, so start destruction sequence
-                    if (ForceDestroy)   // if projectile hits a shield, always destroy
-                    {
-                        __instance.Recycle(false);
-                    }
-                    else if (deathDelay == 0f)
-                    {
-                        // If hasn't hit terrain, and still damage left, return here - don't recycle
-                        if (!hasHitTerrain && retVal > 0)
-                        {
-                            return retVal;
-                        }
-                        __instance.Recycle(false);
-                    }
-                    else if (!(bool)PatchProjectile.m_HasSetCollisionDeathDelay.GetValue(__instance))
-                    {
-                        PatchProjectile.m_HasSetCollisionDeathDelay.SetValue(__instance, true);
-                        PatchProjectile.SetProjectileForDelayedDestruction.Invoke(__instance, new object[] { deathDelay });
-                        if (__instance.SeekingProjectile)
-                        {
-                            __instance.SeekingProjectile.enabled = false;
-                        }
-                        PatchProjectile.OnDelayedDeathSet.Invoke(__instance, null);
-                    }
-
-                    DebugPrint("Stage 7 - handle stick on terrain");
-                    bool stickOnTerrain = (bool)PatchProjectile.m_StickOnTerrain.GetValue(__instance);
-                    DebugPrint("HUH");
-                    if (stickOnContact && (stickOnTerrain || !hasHitTerrain))
-                    {
-                        DebugPrint("WHAT");
-                        GameObject test3 = otherCollider.gameObject;
-                        DebugPrint("WHAT 1");
-                        Transform trans = test3.transform;
-                        DebugPrint("WHAT 2");
-                        Vector3 scale = trans.lossyScale;
-                        DebugPrint("WHAT 3");
-                        if (otherCollider.gameObject.transform.lossyScale.Approximately(Vector3.one, 0.001f))
-                        {
-                            DebugPrint("Stage 7a");
-                            ((Component)__instance).transform.SetParent(otherCollider.gameObject.transform);
-                            PatchProjectile.SetStuck.Invoke(__instance, new object[] { true });
-                            SmokeTrail smoke = (SmokeTrail)PatchProjectile.m_Smoke.GetValue(__instance);
-                            if (smoke)
-                            {
-                                smoke.enabled = false;
-                                smoke.Reset();
-                            }
-
-                            DebugPrint("Stage 7b");
-                            Visible stuckTo = Singleton.Manager<ManVisible>.inst.FindVisible(otherCollider);
-                            PatchProjectile.m_VisibleStuckTo.SetValue(__instance, stuckTo);
-                            if (stuckTo.IsNotNull())
-                            {
-                                stuckTo.RecycledEvent.Subscribe(new Action<Visible>((Action<Visible>)PatchProjectile.OnParentDestroyed.GetValue(__instance)));
-                            }
-                            DebugPrint("Stage 7c");
-                            if ((bool)PatchProjectile.m_ExplodeOnStick.GetValue(__instance))
-                            {
-                                Visible visible = (Visible)PatchProjectile.m_VisibleStuckTo.GetValue(__instance);
-                                Damageable directHitTarget = visible.IsNotNull() ? visible.damageable : null;
-                                PatchProjectile.SpawnExplosion.Invoke(__instance, new object[] { hitPoint, directHitTarget });
-                            }
-                            DebugPrint("Stage 7d");
-                            if (((Transform)PatchProjectile.m_StickImpactEffect.GetValue(__instance)).IsNotNull())
-                            {
-                                PatchProjectile.SpawnStickImpactEffect.Invoke(__instance, new object[] { hitPoint });
-                            }
-                        }
-                        else
-                        {
-                            d.LogWarning(string.Concat(new string[]
-                            {
-                            "Won't attach projectile ",
-                            __instance.name,
-                            " to ",
-                            otherCollider.name,
-                            ", as scale is not one"
-                            }));
-                        }
-                    }
-                    DebugPrint("FINAL");
+                    DebugPrint("projectile is inactive in hierarchy");
+                    return 0;
                 }
-                catch (Exception e)
+                if ((bool)PatchProjectile.m_Stuck.GetValue(__instance))
                 {
-                    Console.WriteLine("[AP-P] EXCEPTION IN HANDLE COLLISION:");
-                    Console.WriteLine(e.Message);
-                    if (__instance)
+                    DebugPrint("projectile is stuck");
+                    return 0;
+                }
+                bool singleImpact = (bool)PatchProjectile.m_SingleImpact.GetValue(__instance);
+                bool hasHitTerrain = false;
+
+                bool stickOnContact = (bool)PatchProjectile.m_StickOnContact.GetValue(__instance);
+                float deathDelay = (float)PatchProjectile.GetDeathDelay.Invoke(__instance, null);
+
+                // handle damage calculations and explosions
+                if (damageable)
+                {
+                    DebugPrint("Projectile hit a damageable");
+                    float damage = armorPiercing.remainingDamage;
+
+                    // Armor pierce works as follows:
+                    // Deal full damage to the first block we hit. After that, (1 - pierce) * dealt damage is subtracted from remaining damage (if any)
+                    DebugPrint($"Stage 1 - create new DamageInfo");
+                    ManDamage.DamageInfo damageInfo = new ManDamage.DamageInfo(damage, (ManDamage.DamageType)PatchProjectile.m_DamageType.GetValue(__instance), (ModuleWeapon)PatchProjectile.m_Weapon.GetValue(__instance), __instance.Shooter, hitPoint, __instance.rbody.velocity, 0f, 0f);
+                    DebugPrint($"Stage 2 - deal the damage");
+                    float fracDamageRemaining = Singleton.Manager<ManDamage>.inst.DealDamage(damageInfo, damageable);
+                    DebugPrint("break 3");
+                    float damageDealt = fracDamageRemaining > 0.0f ? damage * (1 - fracDamageRemaining) : damage;
+                    DebugPrint($"Stage 4a - Just dealt {damageDealt} damage to damageable {damageable.name} ({damageable.Health}), original shell has damage {damage}");
+
+                    // block was destroyed, damage potentially leftover
+                    if (fracDamageRemaining > 0.0f)
                     {
-                        __instance.Recycle(false);
+                        retVal = (int)Mathf.Max(0.0f, (damage * fracDamageRemaining) - (damageDealt * (1.0f - armorPiercing.armorPierce)));
+                        DebugPrint($"Killed damageable {damageable.name}, SHELL DMG {damage} ==[REMAINING DMG]=> {retVal}");
+                    }
+                    else
+                    {
+                        DebugPrint($"Failed to kill damageable {damageable.name}, SHELL DMG {damage} ==[REMAINING DMG]=> 0");
+                    }
+                    // no damage leftover cases:
+                    if (retVal == 0)
+                    {
+                        if (deathDelay != 0.0f && !stickOnContact)
+                        {
+                            // penetration fuse, but failed to kill = flattened, spawn the explosion now
+                            deathDelay = 0.0f;
+                            PatchProjectile.SpawnExplosion.Invoke(__instance, new object[] { hitPoint, damageable });
+                        }
+                        else if ((bool)PatchProjectile.IsProjectileArmed.Invoke(__instance, null) && !stickOnContact)
+                        {
+                            // no penetration fuse, check if armed and not stick on contact - stick on contact explosions are done later
+                            PatchProjectile.SpawnExplosion.Invoke(__instance, new object[] { hitPoint, damageable });
+                        }
                     }
                 }
+                else if (otherCollider is TerrainCollider || otherCollider.gameObject.layer == Globals.inst.layerLandmark || otherCollider.GetComponentInParents<TerrainObject>(true))
+                {
+                    DebugPrint("Stage 4b");
+                    hasHitTerrain = true;
+                    PatchProjectile.SpawnTerrainHitEffect.Invoke(__instance, new object[] { hitPoint });
+                    DebugPrint("Stage 4bb");
+
+                    // if explode on terrain, explode and end, no matter death delay
+                    if ((bool)PatchProjectile.m_ExplodeOnTerrain.GetValue(__instance) && (bool)PatchProjectile.IsProjectileArmed.Invoke(__instance, null))
+                    {
+                        PatchProjectile.SpawnExplosion.Invoke(__instance, new object[] { hitPoint, null });
+
+                        // if default single impact behavior, explode on terrain, then die.
+                        // else, keep the bouncing explosions
+                        if (singleImpact)
+                        {
+                            __instance.Recycle(false);
+                            return 0;
+                        }
+                    }
+                }
+
+                DebugPrint("Stage 5 - play sfx");
+                Singleton.Manager<ManSFX>.inst.PlayImpactSFX(__instance.Shooter, (ManSFX.WeaponImpactSfxType)PatchProjectile.m_ImpactSFXType.GetValue(__instance), damageable, hitPoint, otherCollider);
+
+                DebugPrint("Stage 6 - handle recycle");
+                // if here, then no stick on contact, and no damage is leftover, so start destruction sequence
+                if (ForceDestroy)   // if projectile hits a shield, always destroy
+                {
+                    __instance.Recycle(false);
+                }
+                else if (deathDelay == 0f)
+                {
+                    // If hasn't hit terrain, and still damage left, return here - don't recycle
+                    if (!hasHitTerrain && retVal > 0)
+                    {
+                        return retVal;
+                    }
+                    __instance.Recycle(false);
+                }
+                else if (!(bool)PatchProjectile.m_HasSetCollisionDeathDelay.GetValue(__instance))
+                {
+                    PatchProjectile.m_HasSetCollisionDeathDelay.SetValue(__instance, true);
+                    PatchProjectile.SetProjectileForDelayedDestruction.Invoke(__instance, new object[] { deathDelay });
+                    if (__instance.SeekingProjectile)
+                    {
+                        __instance.SeekingProjectile.enabled = false;
+                    }
+                    PatchProjectile.OnDelayedDeathSet.Invoke(__instance, null);
+                }
+
+                DebugPrint("Stage 7 - handle stick on terrain");
+                bool stickOnTerrain = (bool)PatchProjectile.m_StickOnTerrain.GetValue(__instance);
+                DebugPrint("HUH");
+                if (stickOnContact && (stickOnTerrain || !hasHitTerrain))
+                {
+                    DebugPrint("WHAT");
+                    GameObject test3 = otherCollider.gameObject;
+                    DebugPrint("WHAT 1");
+                    Transform trans = test3.transform;
+                    DebugPrint("WHAT 2");
+                    Vector3 scale = trans.lossyScale;
+                    DebugPrint("WHAT 3");
+                    if (otherCollider.gameObject.transform.lossyScale.Approximately(Vector3.one, 0.001f))
+                    {
+                        DebugPrint("Stage 7a");
+                        ((Component)__instance).transform.SetParent(otherCollider.gameObject.transform);
+                        PatchProjectile.SetStuck.Invoke(__instance, new object[] { true });
+                        SmokeTrail smoke = (SmokeTrail)PatchProjectile.m_Smoke.GetValue(__instance);
+                        if (smoke)
+                        {
+                            smoke.enabled = false;
+                            smoke.Reset();
+                        }
+
+                        DebugPrint("Stage 7b");
+                        Visible stuckTo = Singleton.Manager<ManVisible>.inst.FindVisible(otherCollider);
+                        PatchProjectile.m_VisibleStuckTo.SetValue(__instance, stuckTo);
+                        if (stuckTo.IsNotNull())
+                        {
+                            stuckTo.RecycledEvent.Subscribe(new Action<Visible>((Action<Visible>)PatchProjectile.OnParentDestroyed.GetValue(__instance)));
+                        }
+                        DebugPrint("Stage 7c");
+                        if ((bool)PatchProjectile.m_ExplodeOnStick.GetValue(__instance))
+                        {
+                            Visible visible = (Visible)PatchProjectile.m_VisibleStuckTo.GetValue(__instance);
+                            Damageable directHitTarget = visible.IsNotNull() ? visible.damageable : null;
+                            PatchProjectile.SpawnExplosion.Invoke(__instance, new object[] { hitPoint, directHitTarget });
+                        }
+                        DebugPrint("Stage 7d");
+                        if (((Transform)PatchProjectile.m_StickImpactEffect.GetValue(__instance)).IsNotNull())
+                        {
+                            PatchProjectile.SpawnStickImpactEffect.Invoke(__instance, new object[] { hitPoint });
+                        }
+                    }
+                    else
+                    {
+                        d.LogWarning(string.Concat(new string[]
+                        {
+                        "Won't attach projectile ",
+                        __instance.name,
+                        " to ",
+                        otherCollider.name,
+                        ", as scale is not one"
+                        }));
+                    }
+                }
+                DebugPrint("FINAL");
                 return retVal;
             }
 
             public static bool Prefix(ref Projectile __instance, ref Collision collision)
             {
+                debugLog.Clear();
+
                 ArmorPiercing armorPiercing = __instance.GetComponent<ArmorPiercing>();
                 if (!armorPiercing || __instance.GetType() != typeof(Projectile) || __instance.GetType().IsSubclassOf(typeof(Projectile)))
                 {
@@ -265,17 +259,39 @@ namespace ArmorPiercingProjectiles.src
                     targetVelocity = targetRigidbody.velocity;
                 }
                 Vector3 originalVelocity = targetVelocity - relativeVelocity;
-                int remainderDamage = PatchProjectile.HandleCollision(__instance, armorPiercing, contactPoint.otherCollider.GetComponentInParents<Damageable>(true), contactPoint.point, originalVelocity, collision.collider, false);
-                
-                // if returns 0, then standard behavior, has hit the limit.
-                if (remainderDamage > 0)
+                try
                 {
-                    // else, block is destroyed. Decrease damage accordingly, reset relative velocity
-                    armorPiercing.remainingDamage = remainderDamage;
-                    DebugPrint(relativeVelocity.ToString());
-                    DebugPrint(targetVelocity.ToString());
-                    DebugPrint(__instance.rbody.velocity.ToString());
-                    __instance.rbody.velocity = originalVelocity;
+                    Damageable damageable = contactPoint.otherCollider.GetComponentInParents<Damageable>(true);
+                    string targetName = targetRigidbody ? targetRigidbody.name : (damageable ? damageable.name : "UNKNOWN");
+                    DebugPrint($"Handle collision for {__instance.name} vs {targetName}");
+                    int remainderDamage = PatchProjectile.HandleCollision(__instance, armorPiercing, damageable, contactPoint.point, originalVelocity, collision.collider, false);
+
+                    // if returns 0, then standard behavior, has hit the limit.
+                    if (remainderDamage > 0)
+                    {
+                        // else, block is destroyed. Decrease damage accordingly, reset relative velocity
+                        armorPiercing.remainingDamage = remainderDamage;
+                        DebugPrint(relativeVelocity.ToString());
+                        DebugPrint(targetVelocity.ToString());
+                        DebugPrint(__instance.rbody.velocity.ToString());
+                        __instance.rbody.velocity = originalVelocity;
+                    }
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("[AP-P] EXCEPTION IN HANDLE COLLISION:");
+                    Console.WriteLine(e.ToString());
+                    if (!IngressPoint.Debug)
+                    {
+                        foreach (string line in IngressPoint.debugLog)
+                        {
+                            Console.WriteLine("    " + line);
+                        }
+                    }
+                    if (__instance)
+                    {
+                        __instance.Recycle(false);
+                    }
                 }
                 return false;
             }
