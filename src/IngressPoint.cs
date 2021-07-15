@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Reflection;
-using Harmony;
+using HarmonyLib;
 using UnityEngine;
 
 
@@ -375,7 +375,7 @@ namespace ArmorPiercingProjectiles.src
 
         public static void Main()
         {
-            HarmonyInstance.Create("flsoz.ttmm.armorpierce.mod").PatchAll(Assembly.GetExecutingAssembly());
+            new Harmony("flsoz.ttmm.armorpierce.mod").PatchAll(Assembly.GetExecutingAssembly());
         }
     }
 }
